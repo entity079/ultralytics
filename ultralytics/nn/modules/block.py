@@ -39,6 +39,7 @@ __all__ = (
     "C3k2",
     "C3x",
     "CBFuse",
+    "FusionBlock",
     "CBLinear",
     "ContrastiveHead",
     "GhostBottleneck",
@@ -1036,6 +1037,39 @@ class CBFuse(nn.Module):
         target_size = xs[-1].shape[2:]
         res = [F.interpolate(x[self.idx[i]], size=target_size, mode="nearest") for i, x in enumerate(xs[:-1])]
         return torch.sum(torch.stack(res + xs[-1:]), dim=0)
+
+
+class FusionBlock(nn.Module):
+    """Memory-efficient multi-scale feature fusion block for combining P3/P4/P5 into one detection feature."""
+
+    def __init__(self, c1: list[int], c2: int, target_idx: int = 0):
+        """Initialize the FusionBlock module.
+
+        Args:
+            c1 (list[int]): Input channels for P3, P4, and P5 feature maps.
+            c2 (int): Output channels after fusion.
+            target_idx (int): Index of the reference feature map resolution.
+        """
+        super().__init__()
+        if not isinstance(c1, (list, tuple)) or len(c1) != 3:
+            raise ValueError(f"FusionBlock expects 3 input feature maps (P3, P4, P5), got {c1}.")
+        self.target_idx = target_idx
+        c_ = max(c2 // len(c1), 32)
+        self.reduce = nn.ModuleList(Conv(ci, c_, k=1, s=1) for ci in c1)
+        self.cv = Conv(c_ * len(c1), c2, k=1, s=1)
+
+    def forward(self, xs: list[torch.Tensor]) -> torch.Tensor:
+        """Align all input features to one resolution, concatenate channels, and reduce channels with 1x1 conv."""
+        if len(xs) != 3:
+            raise ValueError(f"FusionBlock forward expects 3 feature maps (P3, P4, P5), got {len(xs)}.")
+        target_size = xs[self.target_idx].shape[2:]
+        aligned = []
+        for i, x in enumerate(xs):
+            x = self.reduce[i](x)
+            if x.shape[2:] != target_size:
+                x = F.interpolate(x, size=target_size, mode="nearest")
+            aligned.append(x)
+        return self.cv(torch.cat(aligned, dim=1))
 
 
 class C3f(nn.Module):

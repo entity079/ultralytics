@@ -48,6 +48,7 @@ from ultralytics.nn.modules import (
     DWConv,
     DWConvTranspose2d,
     Focus,
+    FusionBlock,
     GhostBottleneck,
     GhostConv,
     HGBlock,
@@ -1710,6 +1711,11 @@ def parse_model(d, ch, verbose=True):
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
+        elif m is FusionBlock:
+            c1, c2 = [ch[x] for x in f], args[0]
+            c2 = make_divisible(min(c2, max_channels) * width, 8)
+            target_idx = args[1] if len(args) > 1 else 0
+            args = [c1, c2, target_idx]
         elif m in frozenset({TorchVision, Index}):
             c2 = args[0]
             c1 = ch[f]
